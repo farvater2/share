@@ -7,8 +7,7 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/app.js",
-    "dev": "tsx app.ts",
-    "prepare": "npm run build"
+    "dev": "tsx app.ts"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.7",
