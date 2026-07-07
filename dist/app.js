@@ -1,21 +1,17 @@
-import { Hono, Context } from 'hono'
-import { serve } from '@hono/node-server'
-import Database from 'better-sqlite3'
-import path from 'path'
-import { fileURLToPath } from 'url'
-
+import { Hono } from 'hono';
+import { serve } from '@hono/node-server';
+import Database from 'better-sqlite3';
+import path from 'path';
+import { fileURLToPath } from 'url';
 // ---------- ES Module dirname ----------
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = path.dirname(__filename)
-
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 // ---------- Database ----------
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'sticker.db')
-const db = new Database(DB_PATH)
-
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'sticker.db');
+const db = new Database(DB_PATH);
 // Enable WAL mode for better concurrent read performance
-db.pragma('journal_mode = WAL')
-db.pragma('foreign_keys = ON')
-
+db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
 // Create tables once on startup
 db.exec(`
   CREATE TABLE IF NOT EXISTS note (
@@ -34,81 +30,73 @@ db.exec(`
     content       BLOB   NOT NULL,
     created_at    INTEGER NOT NULL DEFAULT (unixepoch())
   );
-`)
-
+`);
 // ---------- Prepared statements ----------
-const stmtGetNote    = db.prepare<[], { body: string }>('SELECT body FROM note WHERE id = 1')
-const stmtSetNote    = db.prepare<[string], void>('UPDATE note SET body = ? WHERE id = 1')
-const stmtListFiles  = db.prepare<[], { stored_name: string; original_name: string }>('SELECT stored_name, original_name FROM files ORDER BY created_at DESC')
-const stmtGetFile    = db.prepare<[string], { original_name: string; mime_type: string; content: Buffer } | undefined>('SELECT original_name, mime_type, content FROM files WHERE stored_name = ?')
-const stmtInsertFile = db.prepare<[string, string, string, number, Buffer], void>('INSERT INTO files (original_name, stored_name, mime_type, size, content) VALUES (?, ?, ?, ?, ?)')
-const stmtDeleteFile = db.prepare<[string], { changes: number }>('DELETE FROM files WHERE stored_name = ?')
-
+const stmtGetNote = db.prepare('SELECT body FROM note WHERE id = 1');
+const stmtSetNote = db.prepare('UPDATE note SET body = ? WHERE id = 1');
+const stmtListFiles = db.prepare('SELECT stored_name, original_name FROM files ORDER BY created_at DESC');
+const stmtGetFile = db.prepare('SELECT original_name, mime_type, content FROM files WHERE stored_name = ?');
+const stmtInsertFile = db.prepare('INSERT INTO files (original_name, stored_name, mime_type, size, content) VALUES (?, ?, ?, ?, ?)');
+const stmtDeleteFile = db.prepare('DELETE FROM files WHERE stored_name = ?');
 // ---------- Constants ----------
-const app = new Hono()
-
+const app = new Hono();
 // ---------- Helpers ----------
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;')
+function escapeHtml(text) {
+    return text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
 }
-
-function sanitizeFilename(filename: string): string {
-  return path.basename(filename).replace(/[^a-zA-Z0-9._-]/g, '')
+function sanitizeFilename(filename) {
+    return path.basename(filename).replace(/[^a-zA-Z0-9._-]/g, '');
 }
-
-function guessMime(ext: string): string {
-  const mimeMap: Record<string, string> = {
-    '.txt':  'text/plain',
-    '.jpg':  'image/jpeg',
-    '.jpeg': 'image/jpeg',
-    '.png':  'image/png',
-    '.gif':  'image/gif',
-    '.webp': 'image/webp',
-    '.svg':  'image/svg+xml',
-    '.ico':  'image/x-icon',
-    '.ttf':  'font/ttf',
-    '.html': 'text/html',
-    '.htm':  'text/html',
-    '.pdf':  'application/pdf',
-    '.zip':  'application/zip',
-    '.7z':   'application/x-7z-compressed',
-    '.rar':  'application/vnd.rar',
-  }
-  return mimeMap[ext.toLowerCase()] || 'application/octet-stream'
+function guessMime(ext) {
+    const mimeMap = {
+        '.txt': 'text/plain',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp',
+        '.svg': 'image/svg+xml',
+        '.ico': 'image/x-icon',
+        '.ttf': 'font/ttf',
+        '.html': 'text/html',
+        '.htm': 'text/html',
+        '.pdf': 'application/pdf',
+        '.zip': 'application/zip',
+        '.7z': 'application/x-7z-compressed',
+        '.rar': 'application/vnd.rar',
+    };
+    return mimeMap[ext.toLowerCase()] || 'application/octet-stream';
 }
-
 // ---------- Routes ----------
-
 // Main page
-app.get('/', (c: Context) => {
-  const currentNote = stmtGetNote.get()?.body ?? ''
-  const files = stmtListFiles.all()
-
-  let fileListHtml = ''
-  if (files.length === 0) {
-    fileListHtml = '<p class="empty">No files yet</p>'
-  } else {
-    fileListHtml = '<ul class="file-list">'
-    for (const f of files) {
-      const safeName = encodeURIComponent(f.stored_name)
-      fileListHtml += `
+app.get('/', (c) => {
+    const currentNote = stmtGetNote.get()?.body ?? '';
+    const files = stmtListFiles.all();
+    let fileListHtml = '';
+    if (files.length === 0) {
+        fileListHtml = '<p class="empty">No files yet</p>';
+    }
+    else {
+        fileListHtml = '<ul class="file-list">';
+        for (const f of files) {
+            const safeName = encodeURIComponent(f.stored_name);
+            fileListHtml += `
         <li>
           <span>&#128196; ${escapeHtml(f.original_name)}</span>
           <div class="file-actions">
             <a href="/files/${safeName}" class="download-link">&#11015;</a>
             <button class="delete-btn" data-filename="${safeName}">&#10005;</button>
           </div>
-        </li>`
+        </li>`;
+        }
+        fileListHtml += '</ul>';
     }
-    fileListHtml += '</ul>'
-  }
-
-  const html = `
+    const html = `
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -335,101 +323,83 @@ app.get('/', (c: Context) => {
     });
   </script>
 </body>
-</html>`
-  return c.html(html)
-})
-
+</html>`;
+    return c.html(html);
+});
 // POST – save note
-app.post('/', async (c: Context) => {
-  const body = await c.req.parseBody()
-  const content = body['note_content']?.toString() ?? ''
-  stmtSetNote.run(content)
-  return c.redirect('/')
-})
-
+app.post('/', async (c) => {
+    const body = await c.req.parseBody();
+    const content = body['note_content']?.toString() ?? '';
+    stmtSetNote.run(content);
+    return c.redirect('/');
+});
 // POST – upload file
-app.post('/files', async (c: Context) => {
-  const body = await c.req.parseBody()
-  const file = body['file']
-
-  if (!file || !(file instanceof File)) {
-    return c.text('No file uploaded or invalid file.', 400)
-  }
-
-  const originalName = file.name || 'unnamed'
-  const safeName = sanitizeFilename(originalName)
-  if (!safeName) {
-    return c.text('Invalid filename.', 400)
-  }
-
-  const timestamp = Date.now()
-  const ext = path.extname(safeName)
-  const base = path.basename(safeName, ext)
-  const storedName = `${base}_${timestamp}${ext}`
-
-  const arrayBuffer = await file.arrayBuffer()
-  const buffer = Buffer.from(arrayBuffer)
-  const mime = guessMime(ext)
-
-  stmtInsertFile.run(originalName, storedName, mime, buffer.byteLength, buffer)
-
-  return c.redirect('/')
-})
-
+app.post('/files', async (c) => {
+    const body = await c.req.parseBody();
+    const file = body['file'];
+    if (!file || !(file instanceof File)) {
+        return c.text('No file uploaded or invalid file.', 400);
+    }
+    const originalName = file.name || 'unnamed';
+    const safeName = sanitizeFilename(originalName);
+    if (!safeName) {
+        return c.text('Invalid filename.', 400);
+    }
+    const timestamp = Date.now();
+    const ext = path.extname(safeName);
+    const base = path.basename(safeName, ext);
+    const storedName = `${base}_${timestamp}${ext}`;
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    const mime = guessMime(ext);
+    stmtInsertFile.run(originalName, storedName, mime, buffer.byteLength, buffer);
+    return c.redirect('/');
+});
 // DELETE – remove file
-app.delete('/files/:filename', (c: Context) => {
-  const raw = c.req.param('filename') || ''
-  // param may be URL-encoded
-  const decoded = decodeURIComponent(raw)
-  const safeName = sanitizeFilename(decoded)
-  if (!safeName) {
-    return c.text('Invalid filename.', 400)
-  }
-
-  const result = stmtDeleteFile.run(safeName) as unknown as { changes: number }
-  if (result.changes === 0) {
-    return c.text('File not found.', 404)
-  }
-  return c.text('Deleted', 200)
-})
-
+app.delete('/files/:filename', (c) => {
+    const raw = c.req.param('filename') || '';
+    // param may be URL-encoded
+    const decoded = decodeURIComponent(raw);
+    const safeName = sanitizeFilename(decoded);
+    if (!safeName) {
+        return c.text('Invalid filename.', 400);
+    }
+    const result = stmtDeleteFile.run(safeName);
+    if (result.changes === 0) {
+        return c.text('File not found.', 404);
+    }
+    return c.text('Deleted', 200);
+});
 // GET – download / view file
-app.get('/files/:filename', (c: Context) => {
-  const raw = c.req.param('filename') || ''
-  const decoded = decodeURIComponent(raw)
-  const safeName = sanitizeFilename(decoded)
-  if (!safeName) {
-    return c.text('Invalid filename.', 400)
-  }
-
-  const row = stmtGetFile.get(safeName)
-  if (!row) {
-    return c.text('File not found.', 404)
-  }
-
-  const inlineTypes = ['image/', 'text/html', 'font/']
-  const isInline = inlineTypes.some(t => row.mime_type.startsWith(t))
-  const disposition = isInline
-    ? `inline; filename="${encodeURIComponent(row.original_name)}"`
-    : `attachment; filename="${encodeURIComponent(row.original_name)}"`
-
-  return new Response(row.content as unknown as BodyInit, {
-    headers: {
-      'Content-Type': row.mime_type,
-      'Content-Disposition': disposition,
-    },
-  })
-})
-
+app.get('/files/:filename', (c) => {
+    const raw = c.req.param('filename') || '';
+    const decoded = decodeURIComponent(raw);
+    const safeName = sanitizeFilename(decoded);
+    if (!safeName) {
+        return c.text('Invalid filename.', 400);
+    }
+    const row = stmtGetFile.get(safeName);
+    if (!row) {
+        return c.text('File not found.', 404);
+    }
+    const inlineTypes = ['image/', 'text/html', 'font/'];
+    const isInline = inlineTypes.some(t => row.mime_type.startsWith(t));
+    const disposition = isInline
+        ? `inline; filename="${encodeURIComponent(row.original_name)}"`
+        : `attachment; filename="${encodeURIComponent(row.original_name)}"`;
+    return new Response(row.content, {
+        headers: {
+            'Content-Type': row.mime_type,
+            'Content-Disposition': disposition,
+        },
+    });
+});
 // ---------- Server ----------
-const port = Number(process.env.PORT) || 3000
-serve(
-  {
+const port = Number(process.env.PORT) || 3000;
+serve({
     fetch: app.fetch,
     port,
-  },
-  (info) => {
-    console.log(`Server running at http://localhost:${info.port}`)
-    console.log(`Database: ${DB_PATH}`)
-  }
-)
+}, (info) => {
+    console.log(`Server running at http://localhost:${info.port}`);
+    console.log(`Database: ${DB_PATH}`);
+});
